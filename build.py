@@ -332,11 +332,41 @@ def load_annotations() -> list[tuple[int, str, int, str]]:
 # ---------------------------------------------------------------------------
 # Word wrapping (for token-attention overlay)
 # ---------------------------------------------------------------------------
-# Every body word becomes <span class="w" data-w="N">word</span>. The data-w
+# Most body words become <span class="w" data-w="N">word</span>. The data-w
 # index is the word's position within the paragraph (matches the tokenizer's
-# word grouping), so JS can look up attention[paragraph_id][N].
+# word grouping), so JS can look up attention[paragraph_id][N]. To keep the
+# DOM lean we skip wrapping stop-words; their attention is also stripped at
+# build time so hover never tries to point at an unwrapped position.
 
 _W_EXCLUDE_CLASSES = ("sidenote", "sidenote-marker", "annotation-marker", "paranum", "w")
+
+# Function words we don't bother wrapping. ~120 of the most common English
+# stop-words plus a few that show up specifically in this corpus. Roughly
+# 30–40% of tokens in normal prose, so dropping them halves the DOM.
+_STOPWORDS = set("""
+a about above after again against all also although am among an and another any are
+aren as at back be because been before being below between beyond both but by came
+can cannot could day did do does doing done down due during each either else even
+ever every except few for from further get gets getting give given gives go goes
+going gone got had has have having he her here hers herself him himself his how
+however i if in indeed instead into is isn it its itself just keep kept last let
+like little long made make makes making many may me might more most much must my
+myself never nevertheless no nor not now of off often on once one only onto or
+other others ought our ours ourselves out over own per perhaps put quite rather
+really said same see seen seems shall she should since so some something soon still
+such sure take taken than that the their theirs them themselves then there these
+they this those though through thus to too toward towards under until up upon us
+use used uses using usually very via was way we well went were what when where
+whether which while who whom whose why will with within without would yes yet you
+your yours yourself yourselves
+""".lower().split())
+
+
+def _is_stopword(text: str) -> bool:
+    # Strip trailing punctuation, lowercase, check membership. Matches forms
+    # like "the,", "And,", "is.", "(of"
+    s = text.lower().strip(".,;:!?()[]{}\"'“”‘’—–-")
+    return s in _STOPWORDS
 
 
 def _is_w_excluded(ns) -> bool:
@@ -409,9 +439,17 @@ def wrap_words_in_paragraph(p_tag: Tag, word_spans: list[tuple[int, int]]) -> No
             we = we_abs - n_start
             if cursor < ws:
                 new_nodes.append(NavigableString(s[cursor:ws]))
-            span = helper.new_tag("span", **{"class": "w", "data-w": str(w_i)})
-            span.append(NavigableString(s[ws:we]))
-            new_nodes.append(span)
+            word_text = s[ws:we]
+            if _is_stopword(word_text):
+                # Skip wrapping — emit the bare text. The word still occupies
+                # its data-w index in the attention array, but there's no DOM
+                # span to highlight, and the attention computation has already
+                # zeroed it out as a target.
+                new_nodes.append(NavigableString(word_text))
+            else:
+                span = helper.new_tag("span", **{"class": "w", "data-w": str(w_i)})
+                span.append(NavigableString(word_text))
+                new_nodes.append(span)
             cursor = we
         if cursor < len(s):
             new_nodes.append(NavigableString(s[cursor:]))
@@ -589,6 +627,17 @@ def compute_token_attention(paragraph_texts: list[str],
                     continue
                 word_attn[i, j] = block[:, tj].mean()
 
+        # Mark which words are stop-words (by text content). Their attention
+        # entries will be emptied (you can't hover them) and they'll be
+        # excluded from being *neighbors* of other words.
+        word_texts = [ptext[g["start"]:g["end"]] for g in word_groups]
+        is_stop = [_is_stopword(t) for t in word_texts]
+
+        # Mask stop-word columns so they never win the top-K as targets.
+        if any(is_stop):
+            stop_cols = [i for i, s in enumerate(is_stop) if s]
+            word_attn[:, stop_cols] = 0.0
+
         # Top-K per word. Output shape is compact: each word entry is just
         # [[target_word_idx, weight], ...] — the frontend looks up by data-w
         # so we don't ship character offsets.
@@ -596,14 +645,19 @@ def compute_token_attention(paragraph_texts: list[str],
         spans: list[tuple[int, int]] = []
         kk = min(top_k, n_words - 1)
         for i, g in enumerate(word_groups):
-            row = word_attn[i]
             spans.append((g["start"], g["end"]))
-            if kk <= 0:
+            if is_stop[i] or kk <= 0:
+                # Stop-words don't get hover behavior — empty entry.
                 para_entries.append([])
                 continue
+            row = word_attn[i]
             top_idx = np.argpartition(-row, kk)[:kk]
             top_idx = top_idx[np.argsort(-row[top_idx])]
-            para_entries.append([[int(j), round(float(row[j]), 4)] for j in top_idx])
+            # Drop any target whose weight is 0 (i.e., stop-word target).
+            para_entries.append([
+                [int(j), round(float(row[j]), 4)]
+                for j in top_idx if row[j] > 0
+            ])
 
         attention_per_para.append(para_entries)
         word_spans_per_para.append(spans)
@@ -839,6 +893,7 @@ PAGE_TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Magnifica Humanitas &mdash; Pope Leo XIV</title>
+<link rel="icon" type="image/png" href="/logo.png">
 <link rel="stylesheet" href="style.css">
 <script>
   // Set UI state before paint to avoid flash. Light unless opted in.

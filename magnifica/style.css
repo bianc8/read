@@ -28,10 +28,14 @@
   --sans:  'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
 
   --measure: 36rem;
-  --side:    18rem;
+  /* Sidenote column scales fluidly with the viewport instead of jumping at
+     breakpoints. At ≤1100px we're in compact mode anyway; at 1100→1500px
+     --side grows from 10rem → 18rem; above that, capped. */
+  --side:    clamp(10rem, calc(32vw - 12rem), 18rem);
   --gutter:  2.25rem;
   --toc-w:   15rem;
   --toc-w-collapsed: 11rem;
+  --rail-w:  3.5rem;        /* reserved space for the para-rail */
 }
 
 html[data-theme="dark"] {
@@ -77,13 +81,16 @@ html.theme-flipping *::after {
 
 body {
   display: grid;
-  grid-template-columns: var(--toc-w) 1fr;
+  grid-template-columns: var(--toc-w) minmax(0, 1fr);
   align-items: start;
   min-height: 100vh;
+  /* Right padding always reserves space for the fixed-position .para-rail
+     when it's visible — keeps article sidenotes from sliding behind it. */
+  padding-right: var(--rail-w);
 }
 
 html[data-toc="collapsed"] body {
-  grid-template-columns: var(--toc-w-collapsed) 1fr;
+  grid-template-columns: var(--toc-w-collapsed) minmax(0, 1fr);
 }
 
 /* ==== TOC rail (left) ==============================================
@@ -331,6 +338,11 @@ p.para {
   margin: 0 0 1.2rem;
   hyphens: auto;
   -webkit-hyphens: auto;
+  /* Layout/style containment scopes reflows when 37k word-spans change,
+     without clipping the sidenotes that float into the right margin
+     (those use negative margin to extend outside .para). content-visibility
+     would *also* paint-contain and clip them, so we can't use it here. */
+  contain: layout style;
 }
 .paranum {
   position: absolute;
@@ -615,12 +627,19 @@ html[data-theme="dark"] {
 
 /* Every body word is wrapped in <span class="w" data-w="N">.
    The data-w index is the word's position within its paragraph, which the
-   JS uses to look up attention[paragraph_id][word_idx]. */
+   JS uses to look up attention[paragraph_id][word_idx].
+   contain:layout tells the browser that nothing inside this 1-line span can
+   affect outside layout — huge perf win when resizing with 37k of these. */
 .w {
   border-radius: 2px;
+  contain: layout style;
+}
+/* Transition only kicks in when attention is on — keeps the browser from
+   maintaining transition state on every word during normal reading. */
+html[data-attention="on"] .w {
+  cursor: help;
   transition: background-color 90ms ease;
 }
-html[data-attention="on"] .w { cursor: help; }
 html[data-attention="on"] .w:hover,
 .w.attn-focus {
   background-color: var(--attn-focus);
@@ -632,16 +651,17 @@ html[data-attention="on"] .w:hover,
 
 /* ==== responsive =================================================== */
 
-@media (max-width: 1200px) {
-  :root { --side: 15rem; }
-}
-
-@media (max-width: 1024px) {
-  body { grid-template-columns: var(--toc-w-collapsed) 1fr; }
+/* --side scales fluidly via clamp(). Below ~1340px the sidenote column
+   gets cramped enough to feel crowded against the para-rail; we collapse
+   sidenotes inline at that width, hide the rail, and recover the body
+   padding-right that had reserved space for it. */
+@media (max-width: 1340px) {
+  body { padding-right: 0; grid-template-columns: var(--toc-w-collapsed) 1fr; }
   html[data-toc="collapsed"] body { grid-template-columns: var(--toc-w-collapsed) 1fr; }
   .toc { display: none; }
   html[data-toc="expanded"] .toc { display: block; }
   html[data-toc="expanded"] body { grid-template-columns: var(--toc-w) 1fr; }
+  .para-rail { display: none; }
   /* Sidenotes inline, click-to-expand */
   .paranum {
     position: static;
@@ -672,7 +692,6 @@ html[data-attention="on"] .w:hover,
     line-height: 1;
     font-size: 0.58rem;
   }
-  .para-rail { display: none; }
 }
 
 @media (max-width: 700px) {
