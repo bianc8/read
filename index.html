@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cjtb library</title>
+<meta name="description" content="reader editions of interesting digital texts with occasional additional experiments">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #1f1f1f;
+    --bg:   #ECE5DA;
+    --accent: #6874DE;
+    --accent4: #ECD964;
+    --lines: #1f1f1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #ECE5DA;
+      --bg: #1f1f1f;
+      --accent: #ABB1ED;
+      --accent4: #ECD964;
+      --lines: #ECE5DA;
+    }
+  }
+  html, body { background: var(--bg); }
+  html { height: 100%; scroll-behavior: smooth; }
+  body {
+    color: var(--text);
+    font-family: Lato, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+    margin: 0;
+    min-height: 100%;
+    overflow-wrap: break-word;
+  }
+  a:link, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent4); transition: color 0.3ms; }
+  .w { max-width: 640px; margin: 0 auto; padding: 4rem 2rem; }
+  h1 { margin-top: 0; }
+  li { margin: 0.4rem 0; }
+  span.date { color: var(--text); opacity: 0.6; margin-right: 0.4rem; }
+  hr {
+    margin: 2rem 0;
+    text-align: center;
+    border: 0;
+  }
+  hr:before { content: "/////"; }
+</style>
+</head>
+<body>
+<main>
+  <div class="w">
+    <header><h1>cjtb library</h1></header>
+    <ul>
+      <li>reader editions of interesting digital texts with occasional additional experiments</li>
+      <li>texts</li>
+      <ul>
+        <li>
+          <span class="date">2026-05-15</span>
+          <a href="/magnifica/"><i>magnifica humanitas</i></a>
+        </li>
+      </ul>
+      <li><a href="https://clarebir.ch">cjtb main site</a></li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

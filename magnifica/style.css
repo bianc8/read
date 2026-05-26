@@ -1,0 +1,704 @@
+/* ==================================================================
+   Magnifica Humanitas — reader edition
+   Layout: [ TOC rail (left, sticky, collapsible) ]
+           [ article: prose column + right margin sidenotes ]
+           [ location rail (right, fixed) ]
+   ================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&display=swap');
+
+/* ---- theme tokens -------------------------------------------------- */
+
+:root {
+  --bg: #fdf6e3;
+  --bg-alt: #f5ecd0;
+  --bg-rail: #f8efd5;
+  --ink: #1a1a1a;
+  --ink-soft: #5b5b5b;
+  --ink-faint: #8f8a78;
+  --rule: #d9cfb1;
+  --rule-soft: #e8dfc1;
+  --accent: #7a3b1f;
+  --accent-hover: #b35423;
+  --ann: #1f5f8b;        /* editorial annotation — slate blue */
+  --ann-soft: #3d7aa0;
+  --ann-bg: #e7f1f8;
+
+  --serif: 'EB Garamond', 'Iowan Old Style', 'Palatino', Georgia, serif;
+  --sans:  'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+
+  --measure: 36rem;
+  --side:    18rem;
+  --gutter:  2.25rem;
+  --toc-w:   15rem;
+  --toc-w-collapsed: 11rem;
+}
+
+html[data-theme="dark"] {
+  --bg: #161614;
+  --bg-alt: #1f1f1d;
+  --bg-rail: #1c1c1a;
+  --ink: #ece4cd;
+  --ink-soft: #b2ad9a;
+  --ink-faint: #7b7868;
+  --rule: #3b362a;
+  --rule-soft: #2b2820;
+  --accent: #e2a679;
+  --accent-hover: #ffc89b;
+  --ann: #7fb6dc;
+  --ann-soft: #a6cce7;
+  --ann-bg: #1a2a36;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* When the user clicks the theme toggle we briefly suppress every
+   per-element color/background transition so the page swaps palettes
+   in a single paint instead of staggering across elements. JS removes
+   the class on the next animation frame. */
+html.theme-flipping,
+html.theme-flipping *,
+html.theme-flipping *::before,
+html.theme-flipping *::after {
+  transition: none !important;
+}
+
+body {
+  display: grid;
+  grid-template-columns: var(--toc-w) 1fr;
+  align-items: start;
+  min-height: 100vh;
+}
+
+html[data-toc="collapsed"] body {
+  grid-template-columns: var(--toc-w-collapsed) 1fr;
+}
+
+/* ==== TOC rail (left) ==============================================
+   No background, no border — the TOC should read as floating marginal
+   text, not a sidebar panel. */
+
+.toc-rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: 0;
+}
+
+.toc-head {
+  padding: 1rem 0.75rem 0.75rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-start;  /* anchor left — buttons don't reflow when TOC opens */
+}
+.toc-head .ctl-toggle {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+}
+.toc-toggle .toc-icon { font-size: 0.85rem; line-height: 1; }
+
+/* The comments-link is an <a> that should otherwise look exactly like the
+   other circle toggles in the row. */
+a.ctl-toggle {
+  text-decoration: none;
+}
+.comments-icon { font-size: 0.95rem; line-height: 1; }
+html[data-toc="collapsed"] .toc { display: none; }
+
+.toc {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 1rem 1.5rem;
+  font-family: var(--sans);
+}
+.toc::-webkit-scrollbar { width: 4px; }
+.toc::-webkit-scrollbar-thumb { background: var(--rule-soft); border-radius: 2px; }
+.toc::-webkit-scrollbar-track { background: transparent; }
+
+.toc-top {
+  display: block;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+  padding: 0.25rem 0 0.9rem;
+  margin-bottom: 0.4rem;
+  border: 0;
+}
+.toc-top:hover { color: var(--accent); }
+
+.toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.toc-list li { margin: 0; }
+.toc-list a {
+  display: block;
+  text-decoration: none;
+  color: var(--ink-faint);
+  padding: 0.18rem 0;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  transition: color 80ms;
+  border: 0;
+}
+.toc-list a:hover { color: var(--accent); }
+
+.toc-chapter {
+  margin-top: 0.9rem;
+}
+.toc-chapter > a {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  color: var(--ink-soft);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.62rem;
+  padding: 0.25rem 0;
+}
+.toc-roman {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-style: italic;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+  min-width: 1.4rem;
+  font-size: 0.72rem;
+}
+.toc-chapter > a:hover { color: var(--accent); }
+.toc-chapter > a:hover .toc-roman { color: var(--accent); }
+.toc-title { flex: 1; }
+
+.toc-section { padding-left: 2rem; }
+.toc-section a { font-size: 0.64rem; color: var(--ink-faint); }
+.toc-section.active a,
+.toc-chapter.active > a { color: var(--accent); }
+.toc-chapter.active > a .toc-roman { color: var(--accent); }
+
+/* ==== main page ==================================================== */
+
+.page {
+  padding: 4rem clamp(1.5rem, 4vw, 3rem) 8rem;
+  min-width: 0;
+}
+
+article {
+  max-width: calc(var(--measure) + var(--gutter) + var(--side));
+  margin: 0 auto;
+}
+
+/* ---- masthead ----------------------------------------------------- */
+
+.masthead {
+  max-width: var(--measure);
+  margin-bottom: 3rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 2rem;
+}
+.eyebrow {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin: 0 0 0.5rem;
+}
+.masthead h1 {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 3.2rem;
+  line-height: 1.05;
+  margin: 0 0 0.9rem;
+  color: var(--ink);
+}
+.masthead h1 em { font-style: italic; }
+.addressee {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  color: var(--ink);
+  margin: 0 0 0.5rem;
+}
+.subtitle {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 1.2rem;
+  color: var(--ink-soft);
+  margin: 0 0 1.5rem;
+  max-width: 32rem;
+  line-height: 1.35;
+}
+.source {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+.source a {
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+}
+.source a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ---- body --------------------------------------------------------- */
+
+.body { max-width: var(--measure); }
+
+.chapter {
+  font-family: var(--serif);
+  font-weight: 500;
+  text-align: center;
+  margin: 5rem 0 2.5rem;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+}
+.chapter::before, .chapter::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 1px;
+  background: var(--rule);
+  margin: 0.6rem auto;
+}
+.chapter-label {
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.chapter-title {
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  max-width: 28rem;
+}
+
+.section {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.5rem;
+  margin: 3rem 0 1.2rem;
+  line-height: 1.25;
+}
+
+.subsection {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.2rem;
+  color: var(--ink-soft);
+  margin: 2rem 0 0.8rem;
+}
+
+p.para {
+  position: relative;
+  margin: 0 0 1.2rem;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+.paranum {
+  position: absolute;
+  left: -3rem;
+  top: 0.1em;
+  width: 2.2rem;
+  text-align: right;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+  user-select: none;
+  text-decoration: none;
+  border: 0;
+  cursor: pointer;
+  transition: color 100ms;
+}
+.paranum:hover { color: var(--accent); }
+.paranum.copied { color: var(--accent); }
+.paranum.copied::after {
+  content: "link copied";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 0.4rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+p.other { font-style: italic; color: var(--ink-soft); margin-top: 3rem; }
+
+/* ---- inline links ------------------------------------------------- */
+
+article a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+  transition: color 80ms, border-color 80ms;
+}
+article a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ==== sidenote markers (inline) ==================================== */
+
+.sidenote-marker,
+.annotation-marker {
+  font-family: var(--sans);
+  font-size: 0.62rem;
+  font-weight: 600;
+  vertical-align: super;
+  line-height: 0;
+  margin: 0 0.05rem 0 0.05rem;
+  cursor: pointer;
+}
+.sidenote-marker {
+  color: var(--accent);
+}
+.annotation-marker {
+  color: var(--ann);
+  font-style: italic;
+}
+
+/* ==== sidenote bodies (right margin) =============================== */
+
+.sidenote {
+  float: right;
+  clear: right;
+  margin-right: calc(-1 * (var(--side) + var(--gutter)));
+  width: var(--side);
+  font-family: var(--serif);
+  font-size: 0.82rem;
+  line-height: 1.42;
+  position: relative;
+  margin-top: 0.3rem;
+  margin-bottom: 0.6rem;
+  padding-left: 0;
+}
+.sidenote.citation { color: var(--ink-soft); }
+.sidenote.annotation {
+  color: var(--ann);
+  font-family: var(--serif);
+  font-style: normal;
+  background: transparent;
+  border-left: 2px solid var(--ann);
+  padding-left: 0.65rem;
+  margin-left: 0;
+}
+.sidenote i, .sidenote em { font-style: italic; }
+
+.sn-label {
+  font-family: var(--sans);
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--accent);
+  vertical-align: super;
+  margin-right: 0.3rem;
+  letter-spacing: 0.02em;
+}
+.sidenote.annotation::before {
+  content: attr(data-label);
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--ann);
+  vertical-align: super;
+  margin-right: 0.3rem;
+}
+
+.sidenote a {
+  color: inherit;
+  border-bottom-color: var(--rule);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.sidenote a:hover { color: var(--accent); border-color: var(--accent); }
+.sidenote.annotation a { border-bottom-color: rgba(31, 95, 139, 0.35); }
+.sidenote.annotation a:hover { color: var(--ann-soft); border-color: var(--ann-soft); }
+
+/* Hide only the checkbox inputs — the <label> markers wear the same class
+   so they can toggle the sidenote, but they must stay visible as superscript
+   citation/annotation indicators in the body text. */
+input.margin-toggle { display: none; }
+
+/* ==== paragraph rail (right, fixed) ===============================
+   Vertical column on the right edge — one tick per paragraph,
+   clickable to jump, currently-visible paragraphs highlighted. */
+
+.para-rail {
+  position: fixed;
+  right: 0.75rem;
+  top: 1.5rem;
+  bottom: 1.5rem;
+  width: 2.6rem;
+  z-index: 40;
+  font-family: var(--sans);
+  pointer-events: none;     /* the ticks themselves re-enable it */
+}
+.para-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.para-rail-list li {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+}
+.para-rail-list a {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+  color: var(--ink-faint);
+  font-size: 0.58rem;
+  letter-spacing: 0.02em;
+  border: 0;
+  padding-right: 0;
+}
+.para-rail-list a:hover { color: var(--accent); }
+/* The tick mark itself */
+.para-rail-list a::after {
+  content: "";
+  display: block;
+  width: 0.45rem;
+  height: 1px;
+  background: var(--rule);
+  transition: width 100ms ease, background 100ms ease;
+}
+.para-rail-list a:hover::after { width: 0.9rem; background: var(--accent); }
+/* Number labels: hidden by default; shown at intervals & chapter starts. */
+.para-rail-list .num { display: none; }
+.para-rail-list li.label .num,
+.para-rail-list li.chapter-start .num {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+.para-rail-list li.chapter-start a {
+  color: var(--ink);
+  font-weight: 600;
+}
+.para-rail-list li.chapter-start .num {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+.para-rail-list li.chapter-start a::after {
+  width: 0.85rem;
+  background: var(--ink);
+}
+/* Active (in viewport) */
+.para-rail-list li.active a { color: var(--accent); }
+.para-rail-list li.active a::after { background: var(--accent); width: 0.7rem; }
+.para-rail-list li.active.label .num,
+.para-rail-list li.active.chapter-start .num { color: var(--accent); }
+/* Show number for the currently active paragraph too */
+.para-rail-list li.active .num {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==== shared toggle button (used in toc-head) ===================== */
+
+.ctl-toggle {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  cursor: pointer;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  transition: background 120ms, color 120ms, border-color 120ms;
+  padding: 0;
+}
+.ctl-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+.theme-icon, .attn-icon { font-size: 0.95rem; line-height: 1; }
+.theme-icon-dark { display: none; }
+html[data-theme="dark"] .theme-icon-light { display: none; }
+html[data-theme="dark"] .theme-icon-dark { display: inline; }
+
+/* SVG icons inside circle toggles — sit in the geometric center of the
+   button instead of fighting Unicode-glyph baselines. */
+.ctl-toggle .ico {
+  display: block;
+  width: 1.05em;
+  height: 1.05em;
+  flex-shrink: 0;
+}
+
+/* Attention toggle: closed eye when off, open eye when on. */
+.attention-toggle .attn-icon-on  { display: none; }
+.attention-toggle .attn-icon-off { display: block; }
+html[data-attention="on"] .attention-toggle .attn-icon-on  { display: block; color: var(--attn-accent); }
+html[data-attention="on"] .attention-toggle .attn-icon-off { display: none; }
+html[data-attention="on"] .attention-toggle { border-color: var(--attn-accent); }
+
+/* ==== attention overlay ============================================ */
+
+:root {
+  --attn-accent: #c47a18;     /* warm amber, distinct from accent + annotation */
+  --attn-focus: rgba(196, 122, 24, 0.42);
+  --attn-strong: rgba(196, 122, 24, 0.26);
+  --attn-medium: rgba(196, 122, 24, 0.16);
+  --attn-weak:   rgba(196, 122, 24, 0.085);
+  --attn-hint:   rgba(196, 122, 24, 0.16);  /* discoverability dots — faint */
+  --attn-dim:    rgba(0, 0, 0, 0);
+}
+html[data-theme="dark"] {
+  --attn-accent: #f5b75a;
+  --attn-focus: rgba(245, 183, 90, 0.42);
+  --attn-strong: rgba(245, 183, 90, 0.30);
+  --attn-medium: rgba(245, 183, 90, 0.20);
+  --attn-weak:   rgba(245, 183, 90, 0.10);
+  --attn-hint:   rgba(245, 183, 90, 0.18);
+}
+
+/* Every body word is wrapped in <span class="w" data-w="N">.
+   The data-w index is the word's position within its paragraph, which the
+   JS uses to look up attention[paragraph_id][word_idx]. */
+.w {
+  border-radius: 2px;
+  transition: background-color 90ms ease;
+}
+html[data-attention="on"] .w { cursor: help; }
+html[data-attention="on"] .w:hover,
+.w.attn-focus {
+  background-color: var(--attn-focus);
+  box-shadow: 0 0 0 1px rgba(196, 122, 24, 0.35);
+}
+.w.attn-strong  { background-color: var(--attn-strong); }
+.w.attn-medium  { background-color: var(--attn-medium); }
+.w.attn-weak    { background-color: var(--attn-weak); }
+
+/* ==== responsive =================================================== */
+
+@media (max-width: 1200px) {
+  :root { --side: 15rem; }
+}
+
+@media (max-width: 1024px) {
+  body { grid-template-columns: var(--toc-w-collapsed) 1fr; }
+  html[data-toc="collapsed"] body { grid-template-columns: var(--toc-w-collapsed) 1fr; }
+  .toc { display: none; }
+  html[data-toc="expanded"] .toc { display: block; }
+  html[data-toc="expanded"] body { grid-template-columns: var(--toc-w) 1fr; }
+  /* Sidenotes inline, click-to-expand */
+  .paranum {
+    position: static;
+    display: inline;
+    margin-right: 0.5rem;
+    color: var(--accent);
+  }
+  .sidenote {
+    display: none;
+    float: none;
+    clear: both;
+    width: auto;
+    margin: 0.6rem 0 1rem 0;
+    padding: 0.6rem 0.8rem;
+    background: var(--bg-alt);
+    border-left: 2px solid var(--rule);
+    font-size: 0.85rem;
+  }
+  .sidenote.annotation {
+    background: var(--ann-bg);
+    border-left-color: var(--ann);
+  }
+  .margin-toggle:checked + .sidenote { display: block; }
+  .sidenote-marker, .annotation-marker {
+    border: 1px solid currentColor;
+    border-radius: 0.6rem;
+    padding: 0 0.3rem;
+    line-height: 1;
+    font-size: 0.58rem;
+  }
+  .para-rail { display: none; }
+}
+
+@media (max-width: 700px) {
+  body {
+    display: block;
+  }
+  .toc-rail {
+    position: relative;
+    width: 100%;
+    height: auto;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc { padding-top: 0.25rem; }
+  .page { padding: 2rem 1.25rem 6rem; }
+  .masthead h1 { font-size: 2.3rem; }
+  .subtitle { font-size: 1.05rem; }
+  html, body { font-size: 18px; }
+}
+
+/* ==== print ======================================================== */
+
+@media print {
+  :root { --bg: #fff; --ink: #000; }
+  .toc-rail, .para-rail { display: none; }
+  body { grid-template-columns: 1fr; }
+  .sidenote { float: none; width: auto; margin: 0.4rem 0; font-size: 0.75rem; }
+}
