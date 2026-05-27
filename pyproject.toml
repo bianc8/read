@@ -1,0 +1,30 @@
+[project]
+name = "read"
+version = "0.1.0"
+description = "Tufte-style multilingual reader for Pope Leo XIV's encyclical Magnifica Humanitas, with citations, editorial annotations, and a transformer-attention overlay."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bs4>=0.0.2",
+    "lxml>=6.1.1",
+    "numpy>=2.4.6",
+    "sentence-transformers>=5.5.1",
+    "torch>=2.12.0",
+    "transformers>=5.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.14",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, flake8-bugbear, comprehensions, simplify.
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",  # line length is handled by the formatter, not enforced as a lint error
+]

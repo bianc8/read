@@ -9,21 +9,59 @@ Output features:
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import re
 import string
+import unicodedata
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 ROOT = Path(__file__).parent
-SOURCE = ROOT / "source.html"
+SOURCE = ROOT / "source.html"     # cached English source (also the build's golden copy)
+SOURCES_DIR = ROOT / "sources"    # cached per-language source HTML fetched from the Vatican
 DIST = ROOT / "magnifica"          # all shipped assets go here — served at read.clarebir.ch/magnifica/
-OUT = DIST / "index.html"
-ATTENTION_OUT = DIST / "attention.json"
+ASSET_BASE = "/magnifica"          # absolute asset root so sub-language pages resolve css/js
+
+# Official languages Magnifica Humanitas was published in. English is the
+# canonical build (annotations + masthead are authored against it); the others
+# are produced by swapping the /en/ segment of SOURCE_URL.
+LANGUAGES = ["en", "it", "fr", "es", "pt", "de", "pl", "ar"]
+
+# Native names shown in the switcher, and which scripts read right-to-left.
+LANG_NAMES = {
+    "en": "English",
+    "it": "Italiano",
+    "fr": "Français",
+    "es": "Español",
+    "pt": "Português",
+    "de": "Deutsch",
+    "pl": "Polski",
+    "ar": "العربية",
+}
+RTL_LANGS = {"ar"}
 
 SOURCE_URL = "https://www.vatican.va/content/leo-xiv/en/encyclicals/documents/20260515-magnifica-humanitas.html"
+
+# Canonical English masthead. Other languages derive theirs from the source's
+# own <meta description> so we never ship a guessed translation.
+EN_MASTHEAD = {
+    "eyebrow": "Encyclical letter",
+    "addressee": "Of His Holiness Pope Leo XIV",
+    "subtitle": "On safeguarding the human person in the time of artificial intelligence",
+}
+
+# The eyebrow ("Encyclical Letter") is normally derived from the meta-description
+# (the text before the Latin title). Arabic uniquely places its localized title
+# *before* "MAGNIFICA HUMANITAS", which would leak the title into the eyebrow, so
+# we pin the genre instead.
+EYEBROW_OVERRIDE = {
+    "ar": "رسالة بابويّة عامّة",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -54,8 +92,82 @@ def _paragraph_plain_text(p_tag: Tag) -> str:
     return " ".join("".join(parts).split()).replace("\xa0", " ")
 
 
-def load() -> BeautifulSoup:
-    return BeautifulSoup(SOURCE.read_text(encoding="utf-8"), "lxml")
+def source_url_for(lang: str) -> str:
+    """Swap the /en/ language segment of SOURCE_URL for another language code."""
+    return SOURCE_URL.replace("/en/", f"/{lang}/")
+
+
+def fetch_source(lang: str) -> str | None:
+    """Return the source HTML for ``lang``, fetching from the Vatican once and
+    caching under ``sources/``. English prefers the checked-in ``source.html``.
+    Returns None if the language page can't be retrieved."""
+    if lang == "en" and SOURCE.exists():
+        return SOURCE.read_text(encoding="utf-8")
+
+    cache = SOURCES_DIR / f"{lang}.html"
+    if cache.exists():
+        return cache.read_text(encoding="utf-8")
+
+    url = source_url_for(lang)
+    req = urllib.request.Request(url, headers={"User-Agent": "magnifica-build/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+        print(f"  warning: could not fetch {lang} source ({exc}) — skipping")
+        return None
+    SOURCES_DIR.mkdir(exist_ok=True)
+    cache.write_text(html, encoding="utf-8")
+    print(f"  fetched {lang} source ({len(html):,} bytes) -> {cache.relative_to(ROOT)}")
+    return html
+
+
+def _clean_meta(desc: str) -> str:
+    """Trim the Vatican boilerplate ("[ Multimedia ]" and rule lines) from a
+    meta-description tail."""
+    desc = desc.split("[")[0]                 # drop "[ Multimedia ] ..."
+    desc = re.sub(r"_{3,}", "", desc)         # drop the long underscore rules
+    return " ".join(desc.split()).strip(" .·")
+
+
+def extract_masthead(soup: BeautifulSoup, lang: str) -> dict:
+    """Localized masthead strings. For English we use the curated copy; for
+    other languages we split the source's own meta-description on the Latin
+    title "MAGNIFICA HUMANITAS" — text before it is the localized "Encyclical
+    Letter" eyebrow, text after it is the addressee + subtitle line."""
+    if lang == "en":
+        return dict(EN_MASTHEAD)
+
+    md = soup.find("meta", attrs={"name": "description"})
+    desc = (md.get("content") if md else "") or ""
+    parts = re.split(r"MAGNIFICA\s+HUMANITAS", desc, maxsplit=1, flags=re.IGNORECASE)
+    eyebrow = EYEBROW_OVERRIDE.get(lang) or _sentence_case(_clean_meta(parts[0]) if parts else "")
+    subtitle = _sentence_case(_clean_meta(parts[1]) if len(parts) > 1 else "")
+    return {"eyebrow": eyebrow, "addressee": "", "subtitle": subtitle}
+
+
+# Strict Roman-numeral matcher. The naive ``[ivxlcdm]+`` matched ordinary words
+# made only of those letters ("im", "civil", "mid") and shouted them; this only
+# accepts well-formed numerals (and is applied to the punctuation-stripped core,
+# so "XIV." is still recognized).
+_ROMAN_RE = re.compile(r"^m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$")
+
+
+def _sentence_case(s: str) -> str:
+    """Lower-case an ALL-CAPS meta string into sentence case, but keep genuine
+    Roman numerals (e.g. the pope's "XIV") upper-cased, even with trailing
+    punctuation."""
+    if not s:
+        return ""
+    words = []
+    for w in s.lower().split():
+        core = w.strip(".,;:()[]")
+        if core and _ROMAN_RE.fullmatch(core):
+            words.append(w.replace(core, core.upper(), 1))
+        else:
+            words.append(w)
+    out = " ".join(words)
+    return out[0].upper() + out[1:] if out else out
 
 
 def find_content_div(soup: BeautifulSoup) -> Tag:
@@ -73,16 +185,25 @@ def first_anchor_name(p: Tag) -> str | None:
 # ---------------------------------------------------------------------------
 
 def extract_footnotes(content: Tag) -> dict[int, str]:
+    """Pull footnote definitions out of the document.
+
+    The Vatican's per-language exports disagree on markup: English wraps each
+    definition in <p class="MsoFootnoteText"> (nested below the body), while
+    other languages emit plain <p class="MsoNormal"> definitions sitting as
+    direct children of the content div. Both anchor the definition with
+    <a name="_ftnN">, so we key off that and then remove the whole paragraph —
+    otherwise the non-English definitions would re-appear as stray body text."""
     notes: dict[int, str] = {}
-    for p in content.find_all("p", class_="MsoFootnoteText"):
-        anchor = p.find("a", attrs={"name": re.compile(r"^_ftn\d+$")})
-        if not anchor:
+    for anchor in content.find_all("a", attrs={"name": re.compile(r"^_ftn\d+$")}):
+        p = anchor.find_parent("p")
+        if p is None:
             continue
         num = int(anchor["name"].removeprefix("_ftn"))
         anchor.decompose()
         html = p.decode_contents().strip()
         html = html.lstrip("\xa0 ").lstrip("&nbsp;").lstrip()
         notes[num] = html
+        p.decompose()
     return notes
 
 
@@ -90,10 +211,53 @@ def extract_footnotes(content: Tag) -> dict[int, str]:
 # Classification
 # ---------------------------------------------------------------------------
 
-PARA_NUM_RE = re.compile(r"^\s*(\d+)\.\s+")
+# Trailing whitespace is optional: some translated exports glue the number to
+# the text ("68.O princípio…"), and requiring a space silently dropped those
+# paragraphs (misread as TOC rows or headings).
+PARA_NUM_RE = re.compile(r"^\s*(\d+)\.\s*")
 
 
-def classify(p: Tag) -> tuple[str, dict]:
+def _anchor_slug(text: str) -> str:
+    """A stable ascii id for headings whose source markup has no <a name>
+    anchor (e.g. the Arabic export). Hash-based so it survives non-Latin text."""
+    return "h-" + hashlib.md5(text.encode("utf-8")).hexdigest()[:10]
+
+
+def slugify_heading(text: str) -> str:
+    """A clean, URL-safe id derived from a heading's text. The Vatican source
+    bookmarks are unreliable (truncated to a single word like "Una", or
+    containing spaces), so we ignore them for ids and build our own. Falls back
+    to a content hash for scripts that don't reduce to ASCII (e.g. Arabic)."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_text).strip("-").lower()
+    return slug if len(slug) >= 2 else _anchor_slug(text)
+
+
+def extract_toc_levels(content: Tag) -> dict[str, str]:
+    """Read the document's own table of contents (the index near the top) to
+    learn each heading's level. In the Vatican TOC, a subsection entry's link is
+    wholly wrapped in <i> while a section entry's is not. Returns
+    ``{anchor_name: 'sub' | 'sec'}`` keyed by the link target (so it can be
+    matched against each heading's <a name>). Most exports include this index
+    (en/fr/es/de/pt/pl); a few (it/ar) omit it, yielding ``{}`` — those fall back
+    to the markup heuristic in :func:`classify`."""
+    levels: dict[str, str] = {}
+    for a in content.find_all("a", href=re.compile(r"^#")):
+        href = a["href"]
+        if href.startswith("#_ftn"):           # footnote ref/back-link, not a TOC entry
+            continue
+        anchor = href[1:]
+        if not anchor:
+            continue
+        txt = a.get_text(" ", strip=True)
+        if not txt or re.match(r"^\[?\d+\]?$", txt):   # bare-number links aren't TOC entries
+            continue
+        level = "sub" if a.find_parent("i") is not None else "sec"
+        levels.setdefault(anchor, level)
+    return levels
+
+
+def classify(p: Tag, toc_levels: dict[str, str] | None = None) -> tuple[str, dict]:
     classes = p.get("class") or []
     if "MsoFootnoteText" in classes:
         return "skip", {}
@@ -114,14 +278,41 @@ def classify(p: Tag) -> tuple[str, dict]:
 
     has_anchor = bool(p.find("a", attrs={"name": True}))
     bold = p.find(["b", "strong"])
-    italic_inside_bold = bool(bold and bold.find("i"))
+    # A subsection heading is *wholly* italic (<b><i>full title</i></b>); a
+    # section heading may merely contain an italicized term — a Latin phrase
+    # ("res novae"), a work's title ("Magnificat") — without being a subsection.
+    # So compare how much of the bold text is italicized rather than testing for
+    # any italic at all. The 0.7 threshold tolerates a non-italic drop-cap letter
+    # (e.g. "R" + <i>esponsibility…</i>).
+    italic_inside_bold = False
+    if bold:
+        bold_text = bold.get_text(" ", strip=True)
+        italic_len = sum(len(i.get_text(" ", strip=True)) for i in bold.find_all("i"))
+        italic_inside_bold = bool(bold_text) and italic_len >= 0.7 * len(bold_text)
 
-    if has_anchor and bold:
+    if has_anchor or bold:
+        # A heading. The Vatican's per-language exports disagree on markup:
+        #   - English bolds AND anchors every heading;
+        #   - Italian/French/... anchor without bolding;
+        #   - Arabic bolds without an anchor.
+        # Centering always marks a chapter line. For the section/subsection
+        # split we prefer the document's own table of contents (authoritative,
+        # works in every language that ships one); only when that index is
+        # absent (it/ar) or doesn't list this anchor do we fall back to the
+        # bold+italic markup cue. The id comes from the heading text (the source
+        # bookmarks are unreliable); the raw bookmark is only used for the lookup.
+        raw_anchor = first_anchor_name(p)
+        anchor = slugify_heading(t)
         if is_centered:
-            return "h1", {"text": t, "anchor": first_anchor_name(p)}
-        if italic_inside_bold:
-            return "h3", {"text": t, "anchor": first_anchor_name(p)}
-        return "h2", {"text": t, "anchor": first_anchor_name(p)}
+            return "h1", {"text": t, "anchor": anchor}
+        level = (toc_levels or {}).get(raw_anchor)
+        if level == "sub":
+            return "h3", {"text": t, "anchor": anchor}
+        if level == "sec":
+            return "h2", {"text": t, "anchor": anchor}
+        if has_anchor and italic_inside_bold:
+            return "h3", {"text": t, "anchor": anchor}
+        return "h2", {"text": t, "anchor": anchor}
 
     if t in {"___________________________"}:
         return "skip", {}
@@ -137,10 +328,12 @@ def transform_paragraph(p: Tag, number: int) -> Tag:
     holder = BeautifulSoup(str(p), "lxml")
     p2 = holder.p
 
-    # Convert footnote-reference anchors into Tufte sidenote markup.
+    # Convert in-text footnote references into Tufte sidenote markup. Every
+    # language marks them as <a href="#_ftnN"> (the name="_ftnref" attribute is
+    # only present in some exports), so we key off the href for consistency.
     # Marker carries the *real* footnote number as text (no CSS counters).
-    for a in p2.find_all("a", attrs={"name": re.compile(r"^_ftnref\d+$")}):
-        n = int(a["name"].removeprefix("_ftnref"))
+    for a in p2.find_all("a", href=re.compile(r"^#_ftn\d+$")):
+        n = int(a["href"].removeprefix("#_ftn"))
         marker = holder.new_tag("label", **{
             "for": f"sn-{n}",
             "class": "margin-toggle sidenote-marker",
@@ -163,7 +356,7 @@ def transform_paragraph(p: Tag, number: int) -> Tag:
     for child in p2.descendants:
         if isinstance(child, NavigableString):
             s = str(child)
-            new = re.sub(r"^\s*\d+\.\s+", "", s, count=1)
+            new = re.sub(r"^\s*\d+\.\s*", "", s, count=1)
             if new != s:
                 child.replace_with(new)
                 break
@@ -216,6 +409,45 @@ def _normalize(s: str) -> str:
     return s.replace("\xa0", " ").replace("–", "-").replace("—", "-")
 
 
+def _make_annotation_nodes(ann_idx: int, note_html: str) -> tuple[Tag, Tag, Tag]:
+    """Build the (marker label, hidden checkbox, sidenote span) trio for one
+    editorial annotation, with the lettered label and the note body filled in."""
+    helper = BeautifulSoup("", "lxml")
+    label = letter_label(ann_idx)
+    ann_id = f"ann-{label}"
+    marker = helper.new_tag("label", **{
+        "for": ann_id,
+        "class": "margin-toggle annotation-marker",
+        "data-label": label,
+    })
+    marker.append(NavigableString(label))
+    cb = helper.new_tag("input", type="checkbox", id=ann_id,
+                        **{"class": "margin-toggle"})
+    span = helper.new_tag("span", **{
+        "class": "sidenote annotation",
+        "data-label": label,
+    })
+    inner = BeautifulSoup(note_html, "lxml")
+    body = inner.body
+    if body:
+        for child in list(body.children):
+            span.append(child)
+    else:
+        span.append(NavigableString(note_html))
+    return marker, cb, span
+
+
+def append_annotation(p_tag: Tag, note_html: str, ann_idx: int) -> None:
+    """Fallback placement: pin the annotation to the end of the paragraph.
+
+    Used when an `after` anchor can't be matched in a translated paragraph — the
+    note still appears (marker at the end of the prose) instead of being dropped."""
+    marker, cb, span = _make_annotation_nodes(ann_idx, note_html)
+    p_tag.append(marker)
+    p_tag.append(cb)
+    p_tag.append(span)
+
+
 def insert_annotation(p_tag: Tag,
                       after: str, occurrence: int,
                       note_html: str, ann_idx: int) -> bool:
@@ -259,29 +491,7 @@ def insert_annotation(p_tag: Tag,
     if target_node is None:
         return False
 
-    # Build markup
-    helper = BeautifulSoup("", "lxml")
-    label = letter_label(ann_idx)
-    ann_id = f"ann-{label}"
-    marker = helper.new_tag("label", **{
-        "for": ann_id,
-        "class": "margin-toggle annotation-marker",
-        "data-label": label,
-    })
-    marker.append(NavigableString(label))
-    cb = helper.new_tag("input", type="checkbox", id=ann_id,
-                        **{"class": "margin-toggle"})
-    span = helper.new_tag("span", **{
-        "class": "sidenote annotation",
-        "data-label": label,
-    })
-    inner = BeautifulSoup(note_html, "lxml")
-    body = inner.body
-    if body:
-        for child in list(body.children):
-            span.append(child)
-    else:
-        span.append(NavigableString(note_html))
+    marker, cb, span = _make_annotation_nodes(ann_idx, note_html)
 
     s = str(target_node)
     # Walk up to detect an <a> ancestor (within this paragraph)
@@ -313,19 +523,20 @@ def insert_annotation(p_tag: Tag,
     return True
 
 
-def load_annotations() -> list[tuple[int, str, int, str]]:
-    """Returns list of (paragraph_number, after_text, occurrence, note_html) in document order."""
+def load_annotations(lang: str = "en") -> list[tuple[int, str, int, str]]:
+    """Editorial annotations for a language, as (paragraph, after, occurrence,
+    note_html) in document order, from ``annotations/<lang>.py``. Returns [] if
+    that module is absent."""
     try:
-        from annotations import ANNOTATIONS  # type: ignore
+        mod = importlib.import_module(f"annotations.{lang}")
     except ImportError:
         return []
+    entries = getattr(mod, "ANNOTATIONS", None)
+    if not entries:
+        return []
     items: list[tuple[int, str, int, str]] = []
-    for entry in ANNOTATIONS:
-        p_num = entry["p"]
-        after = entry["after"]
-        occ = entry.get("occurrence", 1)
-        note = entry["note"]
-        items.append((p_num, after, occ, note))
+    for entry in entries:
+        items.append((entry["p"], entry["after"], entry.get("occurrence", 1), entry["note"]))
     return items
 
 
@@ -511,10 +722,10 @@ def compute_attention(paragraph_concepts: list[set[str]],
 # ---------------------------------------------------------------------------
 
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # 6 layers, 12 heads, 384-dim
-ATTN_CACHE = ROOT / ".token_attention.npz"
 
 
 def compute_token_attention(paragraph_texts: list[str],
+                             cache_path: Path,
                              top_k: int = 8) -> tuple[list[list[list]], list[list[tuple[int, int]]]]:
     """Real transformer attention, per paragraph.
 
@@ -541,9 +752,9 @@ def compute_token_attention(paragraph_texts: list[str],
 
     # Cache invalidation key
     text_hash = hashlib.sha256("\n\n".join(paragraph_texts).encode("utf-8")).hexdigest()
-    if ATTN_CACHE.exists():
+    if cache_path.exists():
         try:
-            d = np.load(ATTN_CACHE, allow_pickle=True)
+            d = np.load(cache_path, allow_pickle=True)
             if str(d["hash"]) == text_hash:
                 print(f"  loaded cached token attention for {len(paragraph_texts)} paragraphs")
                 return d["attention"].tolist(), d["word_spans"].tolist()
@@ -565,7 +776,7 @@ def compute_token_attention(paragraph_texts: list[str],
     word_spans_per_para: list[list[tuple[int, int]]] = []
 
     print(f"  running forward pass on {len(paragraph_texts)} paragraphs ...")
-    for pi, ptext in enumerate(paragraph_texts):
+    for ptext in paragraph_texts:
         enc = tokenizer(
             ptext,
             return_offsets_mapping=True,
@@ -662,9 +873,9 @@ def compute_token_attention(paragraph_texts: list[str],
         attention_per_para.append(para_entries)
         word_spans_per_para.append(spans)
 
-    print(f"  caching token attention ...")
+    print("  caching token attention ...")
     np.savez(
-        ATTN_CACHE,
+        cache_path,
         hash=text_hash,
         attention=np.array(attention_per_para, dtype=object),
         word_spans=np.array(word_spans_per_para, dtype=object),
@@ -679,7 +890,20 @@ def compute_token_attention(paragraph_texts: list[str],
 def fill_citation_sidenotes(soup: BeautifulSoup, notes: dict[int, str]) -> None:
     for span in soup.find_all("span", attrs={"class": re.compile(r"\bcitation\b")}):
         n = int(span["data-footnote"])
-        note_html = notes.get(n, f"[missing footnote {n}]")
+        note_html = notes.get(n)
+        if note_html is None:
+            # The source provides no definition for this footnote (happens in a
+            # couple of translations, e.g. Polish 33/219). Drop the orphan
+            # marker, its toggle checkbox and the empty sidenote rather than
+            # shipping a "[missing footnote N]" placeholder.
+            cb = span.find_previous_sibling("input", id=f"sn-{n}")
+            marker = span.find_previous_sibling("label", attrs={"for": f"sn-{n}"})
+            if cb:
+                cb.decompose()
+            if marker:
+                marker.decompose()
+            span.decompose()
+            continue
         inner = BeautifulSoup(note_html, "lxml")
         body = inner.body
         if body:
@@ -702,18 +926,52 @@ def fill_citation_sidenotes(soup: BeautifulSoup, notes: dict[int, str]) -> None:
 # Build pipeline
 # ---------------------------------------------------------------------------
 
-def build() -> None:
-    soup = load()
+def render_lang_switch(current: str, available: list[str]) -> str:
+    """A native <details> dropdown for the toc-head control row. Lists every
+    built language; the summary shows the current language's 2-letter code."""
+    items: list[str] = []
+    for code in LANGUAGES:
+        if code not in available:
+            continue
+        href = f"{ASSET_BASE}/" if code == "en" else f"{ASSET_BASE}/{code}/"
+        active = " active" if code == current else ""
+        aria = ' aria-current="true"' if code == current else ""
+        name = LANG_NAMES.get(code, code)
+        items.append(
+            f'<li><a class="lang-opt{active}" href="{href}" hreflang="{code}" '
+            f'lang="{code}"{aria}>{name}</a></li>'
+        )
+    cur_name = LANG_NAMES.get(current, current)
+    return (
+        '<details class="lang-switch">'
+        f'<summary class="ctl-toggle lang-summary" title="Change language" '
+        f'aria-label="Change language (currently {cur_name})">'
+        f'<span class="lang-code">{current.upper()}</span></summary>'
+        f'<ul class="lang-menu">{"".join(items)}</ul>'
+        '</details>'
+    )
+
+
+def build(lang: str, source_html: str, available_langs: list[str]) -> None:
+    is_en = lang == "en"
+    soup = BeautifulSoup(source_html, "lxml")
     content = find_content_div(soup)
     notes = extract_footnotes(content)
-    annotations = load_annotations()
+    # The document's own index gives authoritative section/subsection levels.
+    toc_levels = extract_toc_levels(content)
+    # Editorial annotations per language (annotations.py / annotations_<lang>.py).
+    # Letter labels follow document order, so the index is shared across all
+    # paragraphs; an anchor that can't be matched falls back to end-of-paragraph.
+    annotations = load_annotations(lang)
+    n_fallback = 0
 
-    # Index annotations by paragraph for fast lookup, preserving order.
-    ann_by_p: dict[int, list[tuple[str, int, str]]] = {}
-    ann_order: dict[tuple[int, str, int], int] = {}
+    # Index annotations by paragraph for fast lookup. Each entry carries its own
+    # document-order index (the source of its letter label) so two annotations
+    # that happen to share (paragraph, after, occurrence) can't collide onto the
+    # same label.
+    ann_by_p: dict[int, list[tuple[str, int, str, int]]] = {}
     for idx, (p_num, after, occ, note) in enumerate(annotations):
-        ann_by_p.setdefault(p_num, []).append((after, occ, note))
-        ann_order[(p_num, after, occ)] = idx
+        ann_by_p.setdefault(p_num, []).append((after, occ, note, idx))
 
     # First pass — transform paragraphs, insert annotations, capture raw text
     # (which is what the tokenizer will see and what word offsets index into).
@@ -722,27 +980,31 @@ def build() -> None:
     paragraph_texts: list[str] = []
     paragraph_numbers: list[int] = []
     for p in content.find_all("p", recursive=False):
-        kind, info = classify(p)
+        kind, info = classify(p, toc_levels)
         if kind == "skip" or kind == "toc":
             continue
         if kind == "paragraph":
             p_tag = transform_paragraph(p, info["number"])
-            for (after, occ, note) in ann_by_p.get(info["number"], []):
-                ann_idx = ann_order[(info["number"], after, occ)]
+            for (after, occ, note, ann_idx) in ann_by_p.get(info["number"], []):
                 ok = insert_annotation(p_tag, after, occ, note, ann_idx)
                 if not ok:
-                    print(f"  warning: annotation not anchored in p{info['number']}: {after!r}")
+                    # Anchor not found (common in translations) — pin to the
+                    # paragraph end so the note still shows.
+                    append_annotation(p_tag, note, ann_idx)
+                    n_fallback += 1
             info["p_tag"] = p_tag
             para_p_tags.append(p_tag)
             paragraph_texts.append(paragraph_raw_text(p_tag))
             paragraph_numbers.append(info["number"])
         items.append((kind, info))
 
-    # Compute real transformer attention per paragraph.
-    attn_data, word_spans = compute_token_attention(paragraph_texts)
+    # Compute real transformer attention per paragraph (cached per language).
+    attn_cache = ROOT / (".token_attention.npz" if is_en
+                         else f".token_attention.{lang}.npz")
+    attn_data, word_spans = compute_token_attention(paragraph_texts, attn_cache)
 
     # Wrap every word in the body with data-w. Then serialize the html.
-    for p_tag, spans in zip(para_p_tags, word_spans):
+    for p_tag, spans in zip(para_p_tags, word_spans, strict=True):
         wrap_words_in_paragraph(p_tag, spans)
 
     for kind, info in items:
@@ -755,7 +1017,7 @@ def build() -> None:
         "version": 2,
         "paragraphs": {
             f"p{num}": entries
-            for num, entries in zip(paragraph_numbers, attn_data)
+            for num, entries in zip(paragraph_numbers, attn_data, strict=True)
         },
     }
 
@@ -793,6 +1055,19 @@ def build() -> None:
         merged.append((kind, info))
         i += 1
     items = merged
+
+    # Ensure heading ids are unique (text-derived slugs can collide, e.g. two
+    # "The principle of …" subsections). Suffix duplicates -2, -3, … The body id
+    # and the TOC href both read info["anchor"], so they stay in sync.
+    seen_anchors: dict[str, int] = {}
+    for kind, info in items:
+        if kind in ("h1", "h2", "h3") and info.get("anchor"):
+            base = info["anchor"]
+            if base in seen_anchors:
+                seen_anchors[base] += 1
+                info["anchor"] = f"{base}-{seen_anchors[base]}"
+            else:
+                seen_anchors[base] = 1
 
     # Compose body HTML
     chapter_idx = 0
@@ -851,21 +1126,50 @@ def build() -> None:
             toc_items.append(
                 f'<li class="toc-section"><a href="#{info["anchor"]}">{info["text"]}</a></li>'
             )
+        elif kind == "h3":
+            toc_items.append(
+                f'<li class="toc-subsection"><a href="#{info["anchor"]}">{info["text"]}</a></li>'
+            )
     toc_html = "<ol class=\"toc-list\">" + "".join(toc_items) + "</ol>"
 
-    DIST.mkdir(exist_ok=True)
+    # Localized masthead + chrome.
+    mh = extract_masthead(soup, lang)
+    addressee_block = (
+        f'<p class="addressee">{mh["addressee"]}</p>' if mh.get("addressee") else ""
+    )
+    if is_en:
+        doc_title = "Magnifica Humanitas — Pope Leo XIV"
+    else:
+        doc_title = soup.title.get_text(strip=True) if soup.title else "Magnifica Humanitas"
+    lang_switch = render_lang_switch(lang, available_langs)
+    dir_attr = ' dir="rtl"' if lang in RTL_LANGS else ""
+
+    out_dir = DIST if is_en else DIST / lang
+    out_dir.mkdir(parents=True, exist_ok=True)
+    attention_out = out_dir / "attention.json"
+    out_html = out_dir / "index.html"
+
     attention_json = json.dumps(attention_payload, ensure_ascii=False, separators=(",", ":"))
-    ATTENTION_OUT.write_text(attention_json, encoding="utf-8")
+    attention_out.write_text(attention_json, encoding="utf-8")
     page = PAGE_TEMPLATE.format(
         body=body_html_filled,
         toc=toc_html,
-        source_url=SOURCE_URL,
+        source_url=source_url_for(lang),
+        lang=lang,
+        dir_attr=dir_attr,
+        asset_base=ASSET_BASE,
+        doc_title=doc_title,
+        lang_switch=lang_switch,
+        eyebrow=mh["eyebrow"],
+        addressee_block=addressee_block,
+        subtitle=mh["subtitle"],
     )
-    OUT.write_text(page, encoding="utf-8")
+    out_html.write_text(page, encoding="utf-8")
     n_ann = sum(1 for _ in annotations)
     n_words = sum(len(spans) for spans in word_spans)
-    print(f"Wrote {OUT} ({len(page):,} bytes) — {len(notes)} citations, "
-          f"{n_ann} annotations, {n_words} word tokens across "
+    ann_note = f"{n_ann} annotations" + (f" ({n_fallback} pinned to paragraph)" if n_fallback else "")
+    print(f"Wrote {out_html} ({len(page):,} bytes) — {len(notes)} citations, "
+          f"{ann_note}, {n_words} word tokens across "
           f"{len(paragraph_texts)} paragraphs")
 
 
@@ -888,13 +1192,13 @@ def toc_title(raw: str, chapter_idx: int) -> str:
 
 
 PAGE_TEMPLATE = """<!doctype html>
-<html lang="en">
+<html lang="{lang}"{dir_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Magnifica Humanitas &mdash; Pope Leo XIV</title>
+<title>{doc_title}</title>
 <link rel="icon" type="image/png" href="/logo.png">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="{asset_base}/style.css">
 <script>
   // Set UI state before paint to avoid flash. Light unless opted in.
   (function () {{
@@ -941,6 +1245,7 @@ PAGE_TEMPLATE = """<!doctype html>
       <span class="theme-icon theme-icon-light" aria-hidden="true">&#9728;</span>
       <span class="theme-icon theme-icon-dark" aria-hidden="true">&#9789;</span>
     </button>
+    {lang_switch}
     <a class="ctl-toggle comments-link"
        href="https://docs.google.com/document/d/1MV_TvmP-8DUv7_OAcz8XzIOkq5g2-ai8Lv7Aen9ashw/edit?usp=sharing"
        target="_blank" rel="noopener noreferrer"
@@ -962,10 +1267,10 @@ PAGE_TEMPLATE = """<!doctype html>
 <main class="page">
   <article>
     <header class="masthead" id="top">
-      <p class="eyebrow">Encyclical letter</p>
+      <p class="eyebrow">{eyebrow}</p>
       <h1><em>Magnifica Humanitas</em></h1>
-      <p class="addressee">Of His Holiness Pope Leo XIV</p>
-      <p class="subtitle">On safeguarding the human person in the time of artificial intelligence</p>
+      {addressee_block}
+      <p class="subtitle">{subtitle}</p>
       <p class="source">
         Given in Rome &middot; 15 May 2026
         &nbsp;&middot;&nbsp;
@@ -981,11 +1286,27 @@ PAGE_TEMPLATE = """<!doctype html>
   </article>
 </main>
 
-<script src="app.js" defer></script>
+<script src="{asset_base}/app.js" defer></script>
 </body>
 </html>
 """
 
 
+def build_all() -> None:
+    # Fetch every language up front so the switcher only lists what we can build.
+    sources: dict[str, str] = {}
+    for lang in LANGUAGES:
+        html = fetch_source(lang)
+        if html:
+            sources[lang] = html
+    available = [lang for lang in LANGUAGES if lang in sources]
+    if "en" not in available:
+        raise SystemExit("English source unavailable — cannot build.")
+    print(f"Building {len(available)} language(s): {', '.join(available)}")
+    for lang in available:
+        print(f"\n== {lang} ==")
+        build(lang, sources[lang], available)
+
+
 if __name__ == "__main__":
-    build()
+    build_all()

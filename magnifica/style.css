@@ -207,7 +207,17 @@ html[data-toc="collapsed"] .toc { display: none; }
 
 .toc-section { padding-left: 2rem; }
 .toc-section a { font-size: 0.64rem; color: var(--ink-faint); }
+/* Subsections mirror the document's own index: indented a step further and
+   italic. */
+.toc-subsection { padding-left: 3.1rem; }
+.toc-subsection a {
+  font-size: 0.62rem;
+  font-style: italic;
+  color: var(--ink-faint);
+  padding: 0.12rem 0;
+}
 .toc-section.active a,
+.toc-subsection.active a,
 .toc-chapter.active > a { color: var(--accent); }
 .toc-chapter.active > a .toc-roman { color: var(--accent); }
 
@@ -605,6 +615,50 @@ html[data-attention="on"] .attention-toggle .attn-icon-on  { display: block; col
 html[data-attention="on"] .attention-toggle .attn-icon-off { display: none; }
 html[data-attention="on"] .attention-toggle { border-color: var(--attn-accent); }
 
+/* ==== language switcher (toc-head) ================================= */
+
+.lang-switch { position: relative; flex: 0 0 auto; }
+.lang-switch > summary {
+  list-style: none;
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.lang-switch > summary::-webkit-details-marker { display: none; }
+.lang-switch > summary::marker { content: ""; }
+.lang-switch[open] > summary { color: var(--accent); border-color: var(--accent); }
+.lang-code { line-height: 1; }
+
+.lang-menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  inset-inline-start: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  min-width: 9rem;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 0.55rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.lang-menu li { margin: 0; }
+.lang-opt {
+  display: block;
+  padding: 0.34rem 0.6rem;
+  border-radius: 0.4rem;
+  font-family: var(--sans);
+  font-size: 0.84rem;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lang-opt:hover { background: var(--rule-soft); color: var(--accent); }
+.lang-opt.active { color: var(--accent); font-weight: 600; }
+html[dir="rtl"] .lang-menu { text-align: right; }
+
 /* ==== attention overlay ============================================ */
 
 :root {
@@ -720,4 +774,72 @@ html[data-attention="on"] .w:hover,
   .toc-rail, .para-rail { display: none; }
   body { grid-template-columns: 1fr; }
   .sidenote { float: none; width: auto; margin: 0.4rem 0; font-size: 0.75rem; }
+}
+
+/* ==== right-to-left (Arabic) ======================================= */
+/* The grid columns mirror automatically under dir="rtl", but the sidenotes,
+   para-rail, and paragraph numbers position themselves with physical offsets
+   (float:right, right:, left:) that have to be flipped to the opposite side
+   by hand. */
+
+html[dir="rtl"] body {
+  padding-right: 0;
+  padding-left: var(--rail-w);
+}
+html[dir="rtl"] .para-rail { right: auto; left: 0.75rem; }
+
+html[dir="rtl"] .paranum {
+  left: auto;
+  right: -3rem;
+  text-align: left;
+}
+html[dir="rtl"] .paranum.copied::after {
+  right: auto;
+  left: 100%;
+  margin-right: 0;
+  margin-left: 0.4rem;
+}
+
+html[dir="rtl"] .sidenote {
+  float: left;
+  clear: left;
+  margin-right: 0;
+  margin-left: calc(-1 * (var(--side) + var(--gutter)));
+}
+html[dir="rtl"] .sidenote.annotation {
+  border-left: 0;
+  border-right: 2px solid var(--ann);
+  padding-left: 0;
+  padding-right: 0.65rem;
+}
+html[dir="rtl"] .sn-label {
+  margin-right: 0;
+  margin-left: 0.3rem;
+}
+html[dir="rtl"] .sidenote.annotation::before {
+  margin-right: 0;
+  margin-left: 0.3rem;
+}
+html[dir="rtl"] .toc-section {
+  padding-left: 0;
+  padding-right: 2rem;
+}
+html[dir="rtl"] .toc-subsection {
+  padding-left: 0;
+  padding-right: 3.1rem;
+}
+
+/* Compact mode collapses sidenotes inline; re-flip the inline border + spacing
+   and undo the float the desktop RTL rule set. */
+@media (max-width: 1340px) {
+  html[dir="rtl"] body { padding-left: 0; }
+  html[dir="rtl"] .paranum { margin-right: 0; margin-left: 0.5rem; }
+  html[dir="rtl"] .sidenote {
+    float: none;
+    clear: both;
+    margin: 0.6rem 0 1rem 0;
+    border-left: 0;
+    border-right: 2px solid var(--rule);
+  }
+  html[dir="rtl"] .sidenote.annotation { border-right-color: var(--ann); }
 }

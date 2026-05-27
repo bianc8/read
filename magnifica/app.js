@@ -134,6 +134,18 @@
     clearAttention();
   });
 
+  // ---- language switcher ----
+  // Native <details> dropdown; close it when clicking elsewhere or pressing Esc.
+  const langSwitch = document.querySelector(".lang-switch");
+  if (langSwitch) {
+    document.addEventListener("click", (e) => {
+      if (langSwitch.open && !langSwitch.contains(e.target)) langSwitch.open = false;
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && langSwitch.open) langSwitch.open = false;
+    });
+  }
+
   // ---- toc ----
   const tocBtn = document.getElementById("toc-toggle");
   function setTocState(state) {
@@ -154,10 +166,11 @@
 
   // ---- paragraph rail + scroll spy ----
   const paraRailList = document.getElementById("para-rail-list");
-  const tocItems = document.querySelectorAll(".toc-chapter, .toc-section");
+  const tocItems = document.querySelectorAll(".toc-chapter, .toc-section, .toc-subsection");
   const paragraphs = Array.from(document.querySelectorAll("p.para"));
   const chapters = Array.from(document.querySelectorAll("h2.chapter"));
   const sections = Array.from(document.querySelectorAll("h3.section"));
+  const subsections = Array.from(document.querySelectorAll("h4.subsection"));
 
   // Map each paragraph id to its chapter index, so we can mark chapter starts.
   // A paragraph is a "chapter start" if it's the first .para after a .chapter heading.
@@ -312,7 +325,16 @@
     const y = window.scrollY;
     const ch = currentBefore(chapters, y);
     const sec = currentBefore(sections, y);
-    const target = sec || ch;
+    const sub = currentBefore(subsections, y);
+    // Highlight whichever heading we passed most recently (largest top ≤ y),
+    // so a subsection wins inside its section but a fresh section wins the moment
+    // we cross into it.
+    let target = null, best = -Infinity;
+    for (const el of [ch, sec, sub]) {
+      if (!el) continue;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      if (top > best) { best = top; target = el; }
+    }
     setActiveToc(target ? tocHrefFor(target) : null);
   }
 
