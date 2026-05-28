@@ -38,9 +38,8 @@ language in `.token_attention.{lang}.npz`; subsequent runs are fast.
 
 ## Viewing locally
 
-The pages reference assets absolutely (e.g. `/magnifica/style.css`, `/logo.png`), so they
-must be served from the repository root - opening `index.html` directly via `file://`
-will not load styles. Start a static server in the repo root:
+Serve from the repository root so the reader can fetch `attention.json` and resolve
+relative links the same way it will on GitHub Pages:
 
 ```bash
 uv run python -m http.server 8000
@@ -52,6 +51,9 @@ Then open:
 - <http://localhost:8000/magnifica/it/>, `/fr/`, `/es/`, `/pt/`, `/de/`, `/pl/`, `/ar/` - other languages
 
 The in-page language switcher (top of the table-of-contents rail) links between them.
+The generated links are relative, so the same files work both on a root domain
+(`read.clarebir.ch/magnifica/`) and a GitHub Pages project path
+(`bianc8.github.io/read/magnifica/`).
 
 ## Languages
 
@@ -77,7 +79,7 @@ text is machine-translated. Arabic is rendered right-to-left (`dir="rtl"`).
 magnifica/
   index.html          # English (canonical)
   attention.json
-  style.css           # shared assets, referenced absolutely as /magnifica/...
+  style.css           # shared assets, referenced relatively by each page
   app.js
   it/index.html       # one directory per additional language
   it/attention.json

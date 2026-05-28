@@ -24,8 +24,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 ROOT = Path(__file__).parent
 SOURCE = ROOT / "source.html"     # cached English source (also the build's golden copy)
 SOURCES_DIR = ROOT / "sources"    # cached per-language source HTML fetched from the Vatican
-DIST = ROOT / "magnifica"          # all shipped assets go here — served at read.clarebir.ch/magnifica/
-ASSET_BASE = "/magnifica"          # absolute asset root so sub-language pages resolve css/js
+DIST = ROOT / "magnifica"          # all shipped assets go here
 
 # Official languages Magnifica Humanitas was published in. English is the
 # canonical build (annotations + masthead are authored against it); the others
@@ -926,6 +925,30 @@ def fill_citation_sidenotes(soup: BeautifulSoup, notes: dict[int, str]) -> None:
 # Build pipeline
 # ---------------------------------------------------------------------------
 
+def _reader_asset_base(lang: str) -> str:
+    """Relative path from a generated page to magnifica/'s shared assets.
+
+    Relative paths let the same checked-in HTML work both as a domain-root site
+    (read.clarebir.ch/magnifica/) and as a GitHub Pages project site
+    (bianc8.github.io/read/magnifica/).
+    """
+    return "." if lang == "en" else ".."
+
+
+def _repo_root_base(lang: str) -> str:
+    """Relative path from a generated reader page back to the repo/site root."""
+    return ".." if lang == "en" else "../.."
+
+
+def href_for_lang(current: str, target: str) -> str:
+    """Relative link between generated language pages."""
+    if current == "en":
+        return "./" if target == "en" else f"{target}/"
+    if target == "en":
+        return "../"
+    return "./" if target == current else f"../{target}/"
+
+
 def render_lang_switch(current: str, available: list[str]) -> str:
     """A native <details> dropdown for the toc-head control row. Lists every
     built language; the summary shows the current language's 2-letter code."""
@@ -933,7 +956,7 @@ def render_lang_switch(current: str, available: list[str]) -> str:
     for code in LANGUAGES:
         if code not in available:
             continue
-        href = f"{ASSET_BASE}/" if code == "en" else f"{ASSET_BASE}/{code}/"
+        href = href_for_lang(current, code)
         active = " active" if code == current else ""
         aria = ' aria-current="true"' if code == current else ""
         name = LANG_NAMES.get(code, code)
@@ -1157,7 +1180,8 @@ def build(lang: str, source_html: str, available_langs: list[str]) -> None:
         source_url=source_url_for(lang),
         lang=lang,
         dir_attr=dir_attr,
-        asset_base=ASSET_BASE,
+        asset_base=_reader_asset_base(lang),
+        repo_root_base=_repo_root_base(lang),
         doc_title=doc_title,
         lang_switch=lang_switch,
         eyebrow=mh["eyebrow"],
@@ -1197,7 +1221,7 @@ PAGE_TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{doc_title}</title>
-<link rel="icon" type="image/png" href="/logo.png">
+<link rel="icon" type="image/png" href="{repo_root_base}/logo.png">
 <link rel="stylesheet" href="{asset_base}/style.css">
 <script>
   // Set UI state before paint to avoid flash. Light unless opted in.
